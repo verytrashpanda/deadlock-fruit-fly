@@ -1,0 +1,44 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Data: large and regenerable from select_matches.py / parse_matches.py
+data/*
+!data/.gitkeep
+*.dem
+*.dem.bz2
+*.dem.zst
+*.parquet
+*.duckdb
+*.ducklake
+
+# Model artifacts
+models/
+checkpoints/
+runs/
+wandb/
+lightning_logs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Secrets / local config
+.env
+.env.*
+*.key
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
