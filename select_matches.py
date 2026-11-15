@@ -28,29 +28,39 @@ c.sql("INSTALL ducklake; LOAD ducklake; INSTALL httpfs; LOAD httpfs;")
 c.sql(f"ATTACH '{LAKE}' AS dl (READ_ONLY); USE dl;")
 
 # Random-ish candidate sample, deterministic via hash. Full 12-player ranked matches only.
-mod = 1_000_000
-cands = c.sql(
+# Aggregate once into a temp table (the CTE would otherwise be scanned twice).
+t0 = time.time()
+c.sql(
     f"""
-    with m as (
-      select match_id, any_value(start_time) start_time, any_value(duration_s) duration_s,
-             any_value(winning_team) winning_team, count(*) n
-      from match_player
-      where start_time >= '{args.since}' and start_time < '{args.until}'
-        and match_mode = 'Ranked' and game_mode = 'Normal' and match_outcome = 'TeamWin'
-        and duration_s >= {args.min_minutes * 60}
-      group by match_id
-      having count(*) = 12
-    )
-    select match_id, start_time, duration_s, winning_team
-    from m where hash(match_id) % {mod} < {mod} * {args.candidates} / (select count(*) from m)
+    create temp table m as
+    select match_id, any_value(start_time) start_time, any_value(duration_s) duration_s,
+           any_value(winning_team) winning_team
+    from match_player
+    where start_time >= '{args.since}' and start_time < '{args.until}'
+      and match_mode = 'Ranked' and game_mode = 'Normal' and match_outcome = 'TeamWin'
+      and duration_s >= {args.min_minutes * 60}
+    group by match_id
+    having count(*) = 12
     """
+)
+n_matches = c.sql("select count(*) from m").fetchall()[0][0]
+print(f"eligible matches: {n_matches} ({time.time() - t0:.0f}s)", flush=True)
+cands = c.sql(
+    f"select * from m where hash(match_id) % 1000000 < 1000000.0 * {args.candidates} / {n_matches}"
 ).pl()
 print(f"candidates: {len(cands)}", flush=True)
 
+# Restrict the player scan to the same time window and join to the candidate ids (avoids a full-table scan).
+c.register("cand_ids", cands.select("match_id"))
+t0 = time.time()
 players = c.sql(
-    f"select match_id, account_id from match_player where match_id in (select unnest({cands['match_id'].to_list()}))"
+    f"""
+    select p.match_id, p.account_id from match_player p
+    join cand_ids using (match_id)
+    where p.start_time >= '{args.since}' and p.start_time < '{args.until}'
+    """
 ).pl()
-print(f"player rows: {len(players)}", flush=True)
+print(f"player rows: {len(players)} ({time.time() - t0:.0f}s)", flush=True)
 
 # Batch rank lookup (<=1000 accounts/call; 10k accounts/min IP limit)
 accts = players["account_id"].unique().to_list()
