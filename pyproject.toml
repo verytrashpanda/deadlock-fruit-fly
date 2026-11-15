@@ -1,0 +1,17 @@
+[project]
+name = "deadlock-fruit-fly"
+version = "0.1.0"
+description = "Offline macro-decision models for Deadlock built from public match data and replays"
+requires-python = ">=3.11"
+dependencies = [
+    "boon-deadlock",
+    "duckdb",
+    "polars",
+    "pyarrow",
+    "pytz",
+    "requests",
+    "zstandard",
+]
+
+[tool.ruff]
+line-length = 120
