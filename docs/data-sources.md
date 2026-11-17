@@ -27,3 +27,11 @@
 - `snapshots("player_ticks", ticks=[...])` for per-player state; datasets include `objectives`, `mid_boss`, `kills`,
   `teamfights`, `neutrals`, `item_purchases`, `enemy_minimap_ticks`. Tick rate 64.
 - Parse cost on a 32-minute match: about 0.1s open, 1.5 to 2s per dataset.
+
+## Replay expiry (verified 2026-11-17)
+
+Valve replay URLs return 404 for matches older than about 30 days (HEAD check: all 404 up to 2026-10-16, mixed on 17-18 Oct, all 200 from 19 Oct). `salts` still returns a `demo_url` for expired matches, so `select_matches.py` HEAD-checks each URL.
+
+## Lake query hang
+
+A `group by match_id` over `match_player` that returns rows hangs for windows longer than about 12 hours (12h: 1s; 18h+: never returns). Scan in 6h chunks.

@@ -14,7 +14,7 @@ API = "https://api.deadlock-api.com/v1"
 LAKE = "ducklake:https://data.deadlock-api.com/v1/catalog.ducklake"
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--since", default="2026-10-01")  # post 29 Sep patch
+ap.add_argument("--since", default="2026-10-20")  # post 29 Sep patch; replays 404 after ~30 days
 ap.add_argument("--until", default="2026-11-15")
 ap.add_argument("--candidates", type=int, default=4000)
 ap.add_argument("--target", type=int, default=500)
@@ -100,7 +100,7 @@ for n, mid in enumerate(sel.sort("avg_badge", descending=True)["match_id"].to_li
             time.sleep(2)
     else:
         continue
-    if j.get("demo_url"):
+    if j.get("demo_url") and requests.head(j["demo_url"], timeout=30).status_code == 200:  # old replays 404
         urls[mid] = j["demo_url"]
     if n % 50 == 0:
         print(f"salts {n}: {len(urls)} with demo", flush=True)
