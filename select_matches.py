@@ -3,6 +3,7 @@
 Output: data/selected.parquet (match_id, demo_url, avg_badge, n_ranked, winning_team, duration_s, start_time)
 """
 import argparse
+import datetime as dt
 import time
 
 import duckdb
@@ -28,41 +29,37 @@ c.sql("SET memory_limit='4GB'; SET temp_directory='/tmp/duckdb_spill';")
 c.sql("INSTALL ducklake; LOAD ducklake; INSTALL httpfs; LOAD httpfs;")
 c.sql(f"ATTACH '{LAKE}' AS dl (READ_ONLY); USE dl;")
 
-# Random-ish candidate sample, deterministic via hash. Full 12-player ranked matches only.
-# Aggregate once into a temp table (the CTE would otherwise be scanned twice).
+# Hash-sampled (deterministic) full 12-player ranked matches. A single wide-window query hangs on the lake
+# (>~12h returns nothing), so scan in 6h chunks and fetch matches and player ids together.
 t0 = time.time()
-c.sql(
-    f"""
-    create temp table m as
-    select match_id, any_value(start_time) start_time, any_value(duration_s) duration_s,
-           any_value(winning_team) winning_team
-    from match_player
-    where start_time >= '{args.since}' and start_time < '{args.until}'
-      and match_mode = 'Ranked' and game_mode = 'Normal' and match_outcome = 'TeamWin'
-      and duration_s >= {args.min_minutes * 60}
-    group by match_id
-    having count(*) = 12
-    """
-)
-n_matches = c.sql("select count(*) from m").fetchall()[0][0]
-print(f"eligible matches: {n_matches} ({time.time() - t0:.0f}s)", flush=True)
-cands = c.sql(
-    f"select * from m where hash(match_id) % 1000000 < 1000000.0 * {args.candidates} / {n_matches}"
-).pl()
+utc = dt.timezone.utc
+since = dt.datetime.fromisoformat(args.since).replace(tzinfo=utc)
+until = dt.datetime.fromisoformat(args.until).replace(tzinfo=utc)
+m_parts, p_parts = [], []
+lo = since
+while lo < until:
+    hi = min(lo + dt.timedelta(hours=6), until)
+    w = f"start_time >= '{lo.isoformat()}' and start_time < '{hi.isoformat()}' and hash(match_id) % 200 = 0"
+    m_parts.append(
+        c.sql(
+            f"""
+            select match_id, any_value(start_time) start_time, any_value(duration_s) duration_s,
+                   any_value(winning_team) winning_team
+            from match_player
+            where {w} and match_mode = 'Ranked' and game_mode = 'Normal' and match_outcome = 'TeamWin'
+              and duration_s >= {args.min_minutes * 60}
+            group by match_id having count(*) = 12
+            """
+        ).pl()
+    )
+    p_parts.append(c.sql(f"select match_id, account_id from match_player where {w}").pl())
+    lo = hi
+m = pl.concat(m_parts)
+print(f"eligible matches: {len(m)} ({time.time() - t0:.0f}s)", flush=True)
+cands = m.sort(pl.col("match_id").hash()).head(args.candidates)
 print(f"candidates: {len(cands)}", flush=True)
-
-# Restrict the player scan to the same time window and join to the candidate ids (avoids a full-table scan).
-c.register("cand_ids", cands.select("match_id"))
-t0 = time.time()
-players = c.sql(
-    f"""
-    select p.match_id, p.account_id from match_player p
-    join cand_ids using (match_id)
-    where p.start_time >= '{args.since}' and p.start_time < '{args.until}'
-    """
-).pl()
-print(f"player rows: {len(players)} ({time.time() - t0:.0f}s)", flush=True)
-
+players = pl.concat(p_parts).join(cands.select("match_id"), on="match_id")
+print(f"player rows: {len(players)}", flush=True)
 # Batch rank lookup (<=1000 accounts/call; 10k accounts/min IP limit)
 accts = players["account_id"].unique().to_list()
 badge: dict[int, int] = {}
