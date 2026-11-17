@@ -24,6 +24,7 @@ ap.add_argument("--out", default="data/selected.parquet")
 args = ap.parse_args()
 
 c = duckdb.connect()
+c.sql("SET memory_limit='4GB'; SET temp_directory='/tmp/duckdb_spill';")
 c.sql("INSTALL ducklake; LOAD ducklake; INSTALL httpfs; LOAD httpfs;")
 c.sql(f"ATTACH '{LAKE}' AS dl (READ_ONLY); USE dl;")
 
